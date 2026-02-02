@@ -1,0 +1,1265 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF Flipbook Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        font-family: "Inter", sans-serif;
+      }
+
+      body {
+        background: linear-gradient(
+          135deg,
+          #1a1a2e 0%,
+          #16213e 50%,
+          #0f3460 100%
+        );
+        min-height: 100vh;
+      }
+
+      .glass-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .upload-zone {
+        background: linear-gradient(
+          135deg,
+          rgba(99, 102, 241, 0.1) 0%,
+          rgba(168, 85, 247, 0.1) 100%
+        );
+        border: 2px dashed rgba(99, 102, 241, 0.5);
+        transition: all 0.3s ease;
+      }
+
+      .upload-zone:hover,
+      .upload-zone.drag-over {
+        border-color: rgba(168, 85, 247, 0.8);
+        background: linear-gradient(
+          135deg,
+          rgba(99, 102, 241, 0.2) 0%,
+          rgba(168, 85, 247, 0.2) 100%
+        );
+        transform: scale(1.02);
+      }
+
+      .flipbook-container {
+        perspective: 2000px;
+      }
+
+      .book {
+        transform-style: preserve-3d;
+        transition: transform 0.8s ease;
+      }
+
+      .page {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        transform-origin: left center;
+        transition: transform 0.8s cubic-bezier(0.645, 0.045, 0.355, 1);
+        transform-style: preserve-3d;
+        backface-visibility: hidden;
+      }
+
+      .page.flipped {
+        transform: rotateY(-180deg);
+      }
+
+      .page-content {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: white;
+        border-radius: 4px;
+        box-shadow:
+          0 0 20px rgba(0, 0, 0, 0.3),
+          inset 0 0 50px rgba(0, 0, 0, 0.05);
+      }
+
+      .page-front {
+        transform: rotateY(0deg);
+      }
+
+      .page-back {
+        transform: rotateY(180deg);
+      }
+
+      .page-shadow {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          to right,
+          rgba(0, 0, 0, 0.2) 0%,
+          transparent 20%
+        );
+        pointer-events: none;
+      }
+
+      .control-btn {
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+        transition: all 0.3s ease;
+      }
+
+      .control-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 30px rgba(99, 102, 241, 0.4);
+      }
+
+      .control-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .page-indicator {
+        background: linear-gradient(
+          135deg,
+          rgba(99, 102, 241, 0.8) 0%,
+          rgba(168, 85, 247, 0.8) 100%
+        );
+      }
+
+      .loading-spinner {
+        border: 4px solid rgba(255, 255, 255, 0.1);
+        border-left-color: #a855f7;
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .fade-in {
+        animation: fadeIn 0.5s ease forwards;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      /* Page flip animation */
+      .flip-page {
+        position: absolute;
+        width: 50%;
+        height: 100%;
+        right: 0;
+        transform-origin: left center;
+        transform-style: preserve-3d;
+        z-index: 100;
+      }
+
+      .flip-page-front,
+      .flip-page-back {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        backface-visibility: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: white;
+        overflow: hidden;
+      }
+
+      .flip-page-front {
+        z-index: 2;
+      }
+
+      .flip-page-back {
+        transform: rotateY(180deg);
+      }
+
+      .flip-page-back img {
+        transform: scaleX(-1);
+      }
+
+      /* Flip to next (right to left) */
+      @keyframes flipToNext {
+        0% {
+          transform: rotateY(0deg);
+          box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        }
+        50% {
+          transform: rotateY(-90deg);
+          box-shadow: 20px 0 40px rgba(0, 0, 0, 0.4);
+        }
+        100% {
+          transform: rotateY(-180deg);
+          box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        }
+      }
+
+      /* Flip to previous (left to right) */
+      @keyframes flipToPrev {
+        0% {
+          transform: rotateY(-180deg);
+          box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        }
+        50% {
+          transform: rotateY(-90deg);
+          box-shadow: -20px 0 40px rgba(0, 0, 0, 0.4);
+        }
+        100% {
+          transform: rotateY(0deg);
+          box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        }
+      }
+
+      .flipping-next {
+        animation: flipToNext 0.6s ease-in-out forwards;
+      }
+
+      .flipping-prev {
+        animation: flipToPrev 0.6s ease-in-out forwards;
+      }
+
+      /* Page shadow overlay during flip */
+      .page-shadow-overlay {
+        position: absolute;
+        top: 0;
+        width: 50%;
+        height: 100%;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+
+      .page-shadow-left {
+        left: 0;
+        background: linear-gradient(to right, transparent, rgba(0, 0, 0, 0.15));
+      }
+
+      .page-shadow-right {
+        right: 0;
+        background: linear-gradient(to left, transparent, rgba(0, 0, 0, 0.15));
+      }
+
+      .book.is-flipping .page-shadow-overlay {
+        opacity: 1;
+      }
+
+      /* Thumbnail styles */
+      .thumbnail {
+        transition: all 0.3s ease;
+        border: 2px solid transparent;
+      }
+
+      .thumbnail:hover {
+        transform: scale(1.05);
+        border-color: #a855f7;
+      }
+
+      .thumbnail.active {
+        border-color: #6366f1;
+        box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+      }
+
+      /* Scrollbar styling */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+
+      ::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 4px;
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+        border-radius: 4px;
+      }
+
+      .fullscreen-mode {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 9999;
+        background: linear-gradient(
+          135deg,
+          #1a1a2e 0%,
+          #16213e 50%,
+          #0f3460 100%
+        );
+      }
+    </style>
+  </head>
+  <body class="text-white">
+    <!-- Header -->
+    <header class="glass-card py-4 px-6 mb-8">
+      <div class="container mx-auto flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div
+            class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center"
+          >
+            <svg
+              class="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+              ></path>
+            </svg>
+          </div>
+          <h1
+            class="text-xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent"
+          >
+            PDF Flipbook Viewer
+          </h1>
+        </div>
+        <div id="headerControls" class="hidden items-center gap-4">
+          <button
+            id="newFileBtn"
+            class="px-4 py-2 rounded-lg glass-card hover:bg-white/10 transition-all flex items-center gap-2"
+          >
+            <svg
+              class="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 4v16m8-8H4"
+              ></path>
+            </svg>
+            File Baru
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-6 pb-8">
+      <!-- Upload Section -->
+      <section id="uploadSection" class="fade-in">
+        <div class="max-w-2xl mx-auto">
+          <div
+            id="uploadZone"
+            class="upload-zone rounded-2xl p-12 text-center cursor-pointer"
+          >
+            <div class="mb-6">
+              <div
+                class="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center"
+              >
+                <svg
+                  class="w-10 h-10 text-purple-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  ></path>
+                </svg>
+              </div>
+            </div>
+            <h2 class="text-2xl font-semibold mb-2">Upload File PDF</h2>
+            <p class="text-gray-400 mb-6">
+              Seret & lepas file PDF di sini atau klik untuk memilih
+            </p>
+            <input type="file" id="fileInput" accept=".pdf" class="hidden" />
+            <button class="control-btn px-6 py-3 rounded-xl font-medium">
+              Pilih File PDF
+            </button>
+            <p class="text-gray-500 text-sm mt-4">Format yang didukung: PDF</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Loading Section -->
+      <section id="loadingSection" class="hidden text-center py-20">
+        <div class="loading-spinner mx-auto mb-6"></div>
+        <p class="text-gray-400">Memproses file PDF...</p>
+        <p id="loadingProgress" class="text-purple-400 mt-2">0%</p>
+      </section>
+
+      <!-- Flipbook Section -->
+      <section id="flipbookSection" class="hidden fade-in">
+        <!-- Toolbar -->
+        <div class="glass-card rounded-2xl p-4 mb-6">
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-2">
+              <button
+                id="zoomOutBtn"
+                class="p-2 rounded-lg hover:bg-white/10 transition-all"
+                title="Perkecil"
+              >
+                <svg
+                  class="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"
+                  ></path>
+                </svg>
+              </button>
+              <span
+                id="zoomLevel"
+                class="text-sm text-gray-400 min-w-[50px] text-center"
+                >100%</span
+              >
+              <button
+                id="zoomInBtn"
+                class="p-2 rounded-lg hover:bg-white/10 transition-all"
+                title="Perbesar"
+              >
+                <svg
+                  class="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"
+                  ></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="flex items-center gap-4">
+              <button
+                id="toggleThumbnails"
+                class="p-2 rounded-lg hover:bg-white/10 transition-all"
+                title="Tampilkan Thumbnail"
+              >
+                <svg
+                  class="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
+                  ></path>
+                </svg>
+              </button>
+              <button
+                id="fullscreenBtn"
+                class="p-2 rounded-lg hover:bg-white/10 transition-all"
+                title="Layar Penuh"
+              >
+                <svg
+                  class="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                  ></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-gray-400 text-sm">Halaman</span>
+              <input
+                type="number"
+                id="pageInput"
+                class="w-16 px-2 py-1 rounded-lg bg-white/10 border border-white/20 text-center text-sm focus:outline-none focus:border-purple-500"
+                min="1"
+                value="1"
+              />
+              <span class="text-gray-400 text-sm"
+                >dari <span id="totalPagesToolbar">0</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <!-- Flipbook Container -->
+        <div class="flex gap-6">
+          <!-- Thumbnails Sidebar -->
+          <aside
+            id="thumbnailsSidebar"
+            class="hidden glass-card rounded-2xl p-4 w-48 overflow-y-auto max-h-[70vh]"
+          >
+            <h3 class="text-sm font-semibold mb-4 text-gray-400">Halaman</h3>
+            <div id="thumbnailsList" class="space-y-3">
+              <!-- Thumbnails will be rendered here -->
+            </div>
+          </aside>
+
+          <!-- Flipbook -->
+          <div class="flex-1">
+            <div
+              id="flipbookWrapper"
+              class="flipbook-container flex justify-center items-center min-h-[60vh]"
+            >
+              <div class="relative">
+                <!-- Navigation Arrows -->
+                <button
+                  id="prevBtn"
+                  class="absolute left-[-60px] top-1/2 -translate-y-1/2 control-btn p-3 rounded-full z-10"
+                  title="Halaman Sebelumnya"
+                >
+                  <svg
+                    class="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M15 19l-7-7 7-7"
+                    ></path>
+                  </svg>
+                </button>
+
+                <!-- Book -->
+                <div
+                  id="book"
+                  class="book relative bg-gray-900 rounded-lg shadow-2xl"
+                  style="width: 600px; height: 450px"
+                >
+                  <!-- Pages will be rendered here -->
+                </div>
+
+                <button
+                  id="nextBtn"
+                  class="absolute right-[-60px] top-1/2 -translate-y-1/2 control-btn p-3 rounded-full z-10"
+                  title="Halaman Selanjutnya"
+                >
+                  <svg
+                    class="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M9 5l7 7-7 7"
+                    ></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Page Indicator -->
+            <div class="flex justify-center mt-6">
+              <div
+                class="page-indicator px-6 py-3 rounded-full flex items-center gap-4"
+              >
+                <button
+                  id="firstPageBtn"
+                  class="hover:text-white/70 transition-colors"
+                  title="Halaman Pertama"
+                >
+                  <svg
+                    class="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
+                    ></path>
+                  </svg>
+                </button>
+                <span class="text-sm font-medium">
+                  Halaman <span id="currentPage">1</span> dari
+                  <span id="totalPages">1</span>
+                </span>
+                <button
+                  id="lastPageBtn"
+                  class="hover:text-white/70 transition-colors"
+                  title="Halaman Terakhir"
+                >
+                  <svg
+                    class="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M13 5l7 7-7 7M5 5l7 7-7 7"
+                    ></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Audio for page flip sound -->
+    <audio id="pageFlipSound" preload="auto">
+      <source
+        src="data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYrypzEAAAAAAD/+9DEAAAIAAaQAAAAgAADSAAAAATsJAYAAAGNjY2NjU1hRQUAAACisqKioqKi5cuXv/+MjIyLly5cuXLly5cuXLkZGRkZGZGR//GRmZGRkZFy5cvf//8jIyMjIyMjIuXLly5cv///IyMjIyMjP/xkZGRkZGRGRcuXLly5f//+RkZGRkZGRkXLly5cuXL///yMjIyMjIz/+1DERAAO3ANT9BGAIY0Aar6iMAH/8ZGRkZGRkZFy5cuXLl////IyMjIyMjIyLly5cuXLl////y5cuXL/y5f/l7+Xl5eXl5eX///////Ly8vLy8vLy9///////Lly5cv/l/+X/5e////////Ly8vLy8vLy9////////l5eXl/+X/5f///////y8vLy8vLy8vf///////5eXl5f/l/+X///////8vLy8vLy8vL3///////+Xl5eXl5eXl////////Ly8vLy8vLy9////////5eXl5eXl5eX///////8vLy8vLy8u/v///////l5eXl5eXl5////////y8vLy8vLy8vf///////+Xl5eXl5eXl////////Ly8vLy8vLy9////////l5eXl5eXl7///////8vLy8vLy8vL3///////+Xl5eXl5eXl////////Ly8vLy8vLy9///////+Xl5f/l5eX////////y8vLy8vLy8vf///////5eXl5eXl5eX///////8vLy8vLy8vL3///////+Xl5eXl5eXl"
+        type="audio/mp3"
+      />
+    </audio>
+
+    <!-- Footer -->
+    <footer class="glass-card py-4 mt-auto">
+      <div class="container mx-auto px-6 text-center text-gray-500 text-sm">
+        <p>PDF Flipbook Viewer &copy; 2024</p>
+      </div>
+    </footer>
+
+    <script>
+      // PDF.js worker
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+      // State
+      let pdfDoc = null;
+      let currentPage = 1;
+      let totalPages = 0;
+      let zoom = 1;
+      let pageCache = new Map();
+      let isFullscreen = false;
+      let showThumbnails = false;
+      let isAnimating = false;
+      const FLIP_DURATION = 600; // ms
+
+      // Page flip sound - using Web Audio API for better control
+      let audioContext = null;
+      let flipSoundBuffer = null;
+
+      // Initialize audio
+      async function initAudio() {
+        try {
+          audioContext = new (
+            window.AudioContext || window.webkitAudioContext
+          )();
+          // Create a page flip sound programmatically
+          const sampleRate = audioContext.sampleRate;
+          const duration = 0.3;
+          const buffer = audioContext.createBuffer(
+            1,
+            sampleRate * duration,
+            sampleRate,
+          );
+          const data = buffer.getChannelData(0);
+
+          // Generate paper rustle sound
+          for (let i = 0; i < data.length; i++) {
+            const t = i / sampleRate;
+            // White noise with envelope
+            const noise = Math.random() * 2 - 1;
+            // Attack-decay envelope
+            const envelope =
+              Math.exp(-t * 8) * Math.sin((t * Math.PI) / duration);
+            // Add some low frequency for paper body
+            const lowFreq = Math.sin(t * 150) * 0.3;
+            data[i] = (noise * 0.6 + lowFreq) * envelope * 0.4;
+          }
+
+          flipSoundBuffer = buffer;
+        } catch (e) {
+          console.log("Audio not supported");
+        }
+      }
+
+      function playFlipSound() {
+        if (!audioContext || !flipSoundBuffer) return;
+
+        try {
+          if (audioContext.state === "suspended") {
+            audioContext.resume();
+          }
+
+          const source = audioContext.createBufferSource();
+          source.buffer = flipSoundBuffer;
+
+          // Add filter for more realistic paper sound
+          const filter = audioContext.createBiquadFilter();
+          filter.type = "lowpass";
+          filter.frequency.value = 3000;
+
+          const gainNode = audioContext.createGain();
+          gainNode.gain.value = 0.5;
+
+          source.connect(filter);
+          filter.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+
+          source.start(0);
+        } catch (e) {
+          console.log("Error playing sound");
+        }
+      }
+
+      // Initialize audio on first user interaction
+      document.addEventListener(
+        "click",
+        () => {
+          if (!audioContext) {
+            initAudio();
+          }
+        },
+        { once: true },
+      );
+
+      // DOM Elements
+      const uploadSection = document.getElementById("uploadSection");
+      const loadingSection = document.getElementById("loadingSection");
+      const flipbookSection = document.getElementById("flipbookSection");
+      const uploadZone = document.getElementById("uploadZone");
+      const fileInput = document.getElementById("fileInput");
+      const book = document.getElementById("book");
+      const prevBtn = document.getElementById("prevBtn");
+      const nextBtn = document.getElementById("nextBtn");
+      const firstPageBtn = document.getElementById("firstPageBtn");
+      const lastPageBtn = document.getElementById("lastPageBtn");
+      const currentPageEl = document.getElementById("currentPage");
+      const totalPagesEl = document.getElementById("totalPages");
+      const totalPagesToolbar = document.getElementById("totalPagesToolbar");
+      const pageInput = document.getElementById("pageInput");
+      const zoomInBtn = document.getElementById("zoomInBtn");
+      const zoomOutBtn = document.getElementById("zoomOutBtn");
+      const zoomLevel = document.getElementById("zoomLevel");
+      const fullscreenBtn = document.getElementById("fullscreenBtn");
+      const toggleThumbnails = document.getElementById("toggleThumbnails");
+      const thumbnailsSidebar = document.getElementById("thumbnailsSidebar");
+      const thumbnailsList = document.getElementById("thumbnailsList");
+      const headerControls = document.getElementById("headerControls");
+      const newFileBtn = document.getElementById("newFileBtn");
+      const loadingProgress = document.getElementById("loadingProgress");
+
+      // Event Listeners
+      uploadZone.addEventListener("click", () => fileInput.click());
+      uploadZone.addEventListener("dragover", handleDragOver);
+      uploadZone.addEventListener("dragleave", handleDragLeave);
+      uploadZone.addEventListener("drop", handleDrop);
+      fileInput.addEventListener("change", handleFileSelect);
+      prevBtn.addEventListener("click", goToPrevPage);
+      nextBtn.addEventListener("click", goToNextPage);
+      firstPageBtn.addEventListener("click", goToFirstPage);
+      lastPageBtn.addEventListener("click", goToLastPage);
+      zoomInBtn.addEventListener("click", zoomIn);
+      zoomOutBtn.addEventListener("click", zoomOut);
+      fullscreenBtn.addEventListener("click", toggleFullscreen);
+      toggleThumbnails.addEventListener("click", toggleThumbnailsSidebar);
+      newFileBtn.addEventListener("click", resetViewer);
+      pageInput.addEventListener("change", handlePageInputChange);
+      pageInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") handlePageInputChange();
+      });
+
+      // Keyboard navigation
+      document.addEventListener("keydown", (e) => {
+        if (!pdfDoc) return;
+        if (e.key === "ArrowLeft") goToPrevPage();
+        if (e.key === "ArrowRight") goToNextPage();
+        if (e.key === "Home") goToFirstPage();
+        if (e.key === "End") goToLastPage();
+        if (e.key === "+" || e.key === "=") zoomIn();
+        if (e.key === "-") zoomOut();
+        if (e.key === "Escape" && isFullscreen) toggleFullscreen();
+      });
+
+      // Handle drag events
+      function handleDragOver(e) {
+        e.preventDefault();
+        uploadZone.classList.add("drag-over");
+      }
+
+      function handleDragLeave(e) {
+        e.preventDefault();
+        uploadZone.classList.remove("drag-over");
+      }
+
+      function handleDrop(e) {
+        e.preventDefault();
+        uploadZone.classList.remove("drag-over");
+        const file = e.dataTransfer.files[0];
+        if (file && file.type === "application/pdf") {
+          loadPDF(file);
+        } else {
+          alert("Mohon pilih file PDF yang valid.");
+        }
+      }
+
+      function handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (file) {
+          loadPDF(file);
+        }
+      }
+
+      // Load PDF
+      async function loadPDF(file) {
+        showSection("loading");
+
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          totalPages = pdfDoc.numPages;
+
+          // Update UI
+          totalPagesEl.textContent = totalPages;
+          totalPagesToolbar.textContent = totalPages;
+          pageInput.max = totalPages;
+
+          // Pre-render pages
+          await preRenderPages();
+
+          // Show flipbook
+          showSection("flipbook");
+          headerControls.classList.remove("hidden");
+          headerControls.classList.add("flex");
+
+          // Render initial page
+          await renderCurrentPage();
+
+          // Generate thumbnails
+          generateThumbnails();
+        } catch (error) {
+          console.error("Error loading PDF:", error);
+          alert("Gagal memuat file PDF. Pastikan file tidak rusak.");
+          showSection("upload");
+        }
+      }
+
+      // Pre-render pages for smoother flipping
+      async function preRenderPages() {
+        const renderPromises = [];
+        for (let i = 1; i <= Math.min(totalPages, 10); i++) {
+          renderPromises.push(renderPageToCanvas(i));
+          loadingProgress.textContent = `${Math.round((i / Math.min(totalPages, 10)) * 100)}%`;
+        }
+        await Promise.all(renderPromises);
+      }
+
+      // Render page to canvas and cache it
+      async function renderPageToCanvas(pageNum, scale = 1.5) {
+        if (pageCache.has(`${pageNum}-${scale}`)) {
+          return pageCache.get(`${pageNum}-${scale}`);
+        }
+
+        const page = await pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: scale * zoom });
+
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        await page.render({
+          canvasContext: context,
+          viewport: viewport,
+        }).promise;
+
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+        pageCache.set(`${pageNum}-${scale}`, dataUrl);
+
+        return dataUrl;
+      }
+
+      // Render current page in the book
+      async function renderCurrentPage() {
+        book.innerHTML = "";
+
+        // Create page container
+        const pageContainer = document.createElement("div");
+        pageContainer.className =
+          "absolute inset-0 flex items-center justify-center overflow-hidden rounded-lg";
+        pageContainer.style.background = "#fff";
+
+        // Left page
+        if (currentPage > 0) {
+          const leftPage = await createPageElement(currentPage);
+          leftPage.style.width = "50%";
+          leftPage.style.height = "100%";
+          leftPage.style.borderRight = "1px solid #e5e5e5";
+          pageContainer.appendChild(leftPage);
+        }
+
+        // Right page
+        if (currentPage < totalPages) {
+          const rightPageNum = currentPage + 1;
+          const rightPage = await createPageElement(rightPageNum);
+          rightPage.style.width = "50%";
+          rightPage.style.height = "100%";
+          pageContainer.appendChild(rightPage);
+        }
+
+        book.appendChild(pageContainer);
+
+        // Update page indicator
+        updatePageIndicator();
+
+        // Update buttons state
+        updateButtonsState();
+
+        // Update thumbnail active state
+        updateThumbnailActive();
+      }
+
+      async function createPageElement(pageNum) {
+        const pageEl = document.createElement("div");
+        pageEl.className = "h-full flex items-center justify-center p-2";
+
+        try {
+          const imgData = await renderPageToCanvas(pageNum);
+          const img = document.createElement("img");
+          img.src = imgData;
+          img.className = "max-w-full max-h-full object-contain";
+          img.alt = `Halaman ${pageNum}`;
+          pageEl.appendChild(img);
+        } catch (error) {
+          pageEl.innerHTML = `<span class="text-gray-500">Gagal memuat halaman ${pageNum}</span>`;
+        }
+
+        return pageEl;
+      }
+
+      // Navigation functions with animation
+      async function goToPrevPage() {
+        if (currentPage > 1 && !isAnimating) {
+          const newPage = Math.max(1, currentPage - 2);
+          await animatePageFlip("prev", newPage);
+        }
+      }
+
+      async function goToNextPage() {
+        if (currentPage < totalPages && !isAnimating) {
+          const newPage = Math.min(totalPages, currentPage + 2);
+          await animatePageFlip("next", newPage);
+        }
+      }
+
+      async function goToFirstPage() {
+        if (currentPage > 1 && !isAnimating) {
+          await animatePageFlip("prev", 1);
+        }
+      }
+
+      async function goToLastPage() {
+        const lastPage = totalPages % 2 === 0 ? totalPages - 1 : totalPages;
+        if (currentPage < lastPage && !isAnimating) {
+          await animatePageFlip("next", lastPage);
+        }
+      }
+
+      async function goToPage(pageNum) {
+        if (isAnimating) return;
+        // Make sure we show the correct spread
+        let targetPage = pageNum % 2 === 0 ? pageNum - 1 : pageNum;
+        targetPage = Math.max(1, Math.min(targetPage, totalPages));
+
+        if (targetPage !== currentPage) {
+          const direction = targetPage > currentPage ? "next" : "prev";
+          await animatePageFlip(direction, targetPage);
+        }
+      }
+
+      // Page flip animation
+      async function animatePageFlip(direction, targetPage) {
+        isAnimating = true;
+        book.classList.add("is-flipping");
+
+        // Play flip sound
+        playFlipSound();
+
+        // Create the flipping page element
+        const flipPage = document.createElement("div");
+        flipPage.className = "flip-page";
+
+        const flipFront = document.createElement("div");
+        flipFront.className = "flip-page-front";
+
+        const flipBack = document.createElement("div");
+        flipBack.className = "flip-page-back";
+
+        try {
+          if (direction === "next") {
+            // Front: current right page, Back: next left page
+            const frontImg = await renderPageToCanvas(currentPage + 1);
+            const backPage = targetPage;
+            const backImg = await renderPageToCanvas(backPage);
+
+            const frontImgEl = document.createElement("img");
+            frontImgEl.src = frontImg;
+            frontImgEl.className = "max-w-full max-h-full object-contain";
+            flipFront.appendChild(frontImgEl);
+
+            const backImgEl = document.createElement("img");
+            backImgEl.src = backImg;
+            backImgEl.className = "max-w-full max-h-full object-contain";
+            flipBack.appendChild(backImgEl);
+
+            flipPage.appendChild(flipFront);
+            flipPage.appendChild(flipBack);
+            book.appendChild(flipPage);
+
+            // Trigger animation
+            requestAnimationFrame(() => {
+              flipPage.classList.add("flipping-next");
+            });
+          } else {
+            // For previous: flip from left
+            flipPage.style.right = "auto";
+            flipPage.style.left = "0";
+            flipPage.style.transformOrigin = "right center";
+
+            // Front: current left page, Back: previous right page
+            const frontImg = await renderPageToCanvas(currentPage);
+            const backPage =
+              targetPage + 1 <= totalPages ? targetPage + 1 : targetPage;
+            const backImg = await renderPageToCanvas(backPage);
+
+            const frontImgEl = document.createElement("img");
+            frontImgEl.src = frontImg;
+            frontImgEl.className = "max-w-full max-h-full object-contain";
+            flipFront.appendChild(frontImgEl);
+
+            const backImgEl = document.createElement("img");
+            backImgEl.src = backImg;
+            backImgEl.className = "max-w-full max-h-full object-contain";
+            backImgEl.style.transform = "scaleX(-1)";
+            flipBack.appendChild(backImgEl);
+
+            flipPage.appendChild(flipFront);
+            flipPage.appendChild(flipBack);
+            flipPage.style.transform = "rotateY(0deg)";
+            book.appendChild(flipPage);
+
+            // Trigger animation
+            requestAnimationFrame(() => {
+              flipPage.classList.add("flipping-prev");
+            });
+          }
+        } catch (error) {
+          console.error("Animation error:", error);
+        }
+
+        // Wait for animation to complete
+        await new Promise((resolve) => setTimeout(resolve, FLIP_DURATION));
+
+        // Update page and render
+        currentPage = targetPage;
+        book.classList.remove("is-flipping");
+
+        // Remove flip element and render final state
+        if (flipPage.parentNode) {
+          flipPage.remove();
+        }
+
+        await renderCurrentPage();
+        isAnimating = false;
+      }
+
+      function handlePageInputChange() {
+        const pageNum = parseInt(pageInput.value);
+        if (pageNum >= 1 && pageNum <= totalPages) {
+          goToPage(pageNum);
+        } else {
+          pageInput.value = currentPage;
+        }
+      }
+
+      // Update UI
+      function updatePageIndicator() {
+        const displayPage =
+          currentPage + 1 <= totalPages
+            ? `${currentPage}-${currentPage + 1}`
+            : `${currentPage}`;
+        currentPageEl.textContent = displayPage;
+        pageInput.value = currentPage;
+      }
+
+      function updateButtonsState() {
+        prevBtn.disabled = currentPage <= 1;
+        nextBtn.disabled = currentPage >= totalPages - 1;
+        firstPageBtn.disabled = currentPage <= 1;
+        lastPageBtn.disabled = currentPage >= totalPages - 1;
+      }
+
+      // Zoom functions
+      function zoomIn() {
+        if (zoom < 2) {
+          zoom += 0.1;
+          pageCache.clear();
+          updateZoomLevel();
+          renderCurrentPage();
+        }
+      }
+
+      function zoomOut() {
+        if (zoom > 0.5) {
+          zoom -= 0.1;
+          pageCache.clear();
+          updateZoomLevel();
+          renderCurrentPage();
+        }
+      }
+
+      function updateZoomLevel() {
+        zoomLevel.textContent = `${Math.round(zoom * 100)}%`;
+        const baseWidth = 600;
+        const baseHeight = 450;
+        book.style.width = `${baseWidth * zoom}px`;
+        book.style.height = `${baseHeight * zoom}px`;
+      }
+
+      // Fullscreen
+      function toggleFullscreen() {
+        const container = document.querySelector("main");
+
+        if (!isFullscreen) {
+          if (container.requestFullscreen) {
+            container.requestFullscreen();
+          } else if (container.webkitRequestFullscreen) {
+            container.webkitRequestFullscreen();
+          }
+        } else {
+          if (document.exitFullscreen) {
+            document.exitFullscreen();
+          } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+          }
+        }
+
+        isFullscreen = !isFullscreen;
+      }
+
+      // Thumbnails
+      function toggleThumbnailsSidebar() {
+        showThumbnails = !showThumbnails;
+        thumbnailsSidebar.classList.toggle("hidden", !showThumbnails);
+      }
+
+      async function generateThumbnails() {
+        thumbnailsList.innerHTML = "";
+
+        for (let i = 1; i <= totalPages; i++) {
+          const thumbContainer = document.createElement("div");
+          thumbContainer.className =
+            "thumbnail cursor-pointer rounded-lg overflow-hidden bg-white/10";
+          thumbContainer.dataset.page = i;
+          thumbContainer.addEventListener("click", () => goToPage(i));
+
+          try {
+            const imgData = await renderPageToCanvas(i, 0.3);
+            const img = document.createElement("img");
+            img.src = imgData;
+            img.className = "w-full";
+            img.alt = `Thumbnail halaman ${i}`;
+            thumbContainer.appendChild(img);
+          } catch (error) {
+            thumbContainer.innerHTML = `<div class="p-4 text-center text-xs">${i}</div>`;
+          }
+
+          const label = document.createElement("div");
+          label.className = "text-center text-xs py-1 text-gray-400";
+          label.textContent = `${i}`;
+          thumbContainer.appendChild(label);
+
+          thumbnailsList.appendChild(thumbContainer);
+        }
+
+        updateThumbnailActive();
+      }
+
+      function updateThumbnailActive() {
+        document.querySelectorAll(".thumbnail").forEach((thumb) => {
+          const pageNum = parseInt(thumb.dataset.page);
+          const isActive =
+            pageNum === currentPage || pageNum === currentPage + 1;
+          thumb.classList.toggle("active", isActive);
+        });
+      }
+
+      // Section visibility
+      function showSection(section) {
+        uploadSection.classList.add("hidden");
+        loadingSection.classList.add("hidden");
+        flipbookSection.classList.add("hidden");
+
+        switch (section) {
+          case "upload":
+            uploadSection.classList.remove("hidden");
+            break;
+          case "loading":
+            loadingSection.classList.remove("hidden");
+            break;
+          case "flipbook":
+            flipbookSection.classList.remove("hidden");
+            break;
+        }
+      }
+
+      // Reset viewer
+      function resetViewer() {
+        pdfDoc = null;
+        currentPage = 1;
+        totalPages = 0;
+        zoom = 1;
+        pageCache.clear();
+        fileInput.value = "";
+        headerControls.classList.add("hidden");
+        headerControls.classList.remove("flex");
+        showSection("upload");
+        updateZoomLevel();
+      }
+    </script>
+  </body>
+</html>
